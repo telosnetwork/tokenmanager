@@ -12,7 +12,8 @@
 using namespace std;
 using namespace eosio;
 
-static constexpr eosio::name TOKEN_CONTRACT = name("testtoken321");
+static constexpr eosio::name TOKEN_CONTRACT = name("secure.token");
+static constexpr eosio::name FEE_ACCOUNT = name("exrsrv.tf");
 
 CONTRACT tokenmanager : public contract
 {
@@ -24,6 +25,8 @@ public:
 
     ACTION init(asset create_price);
 
+    ACTION addadmin(name newadmin);
+
     ACTION openacct(name account_name);
 
     ACTION closeacct(name account_name);
@@ -31,6 +34,8 @@ public:
     ACTION addtoken(string token_name, name token_owner, name contract_account, symbol token_symbol, string logo_sm, string logo_lg);
 
     ACTION setmeta(symbol token_symbol, string token_name, string logo_sm, string logo_lg);
+
+    ACTION deltoken(symbol token_symbol);
 
     ACTION createtoken(name owner, string token_name, asset max_supply, string logo_sm, string logo_lg);
 
@@ -41,13 +46,36 @@ public:
         check( token.amount > 0, "max-supply must be positive");    
     }
 
+    bool is_admin(name admin) {
+        config_table configs(get_self(), get_self().value);
+        check(configs.exists(), "Contract not yet initialized");
+        auto conf = configs.get();
+        for (name a : conf.admins) 
+            if (admin == a)
+                return true;
+
+        return false;
+    }
+
+    void require_admin() {
+        config_table configs(get_self(), get_self().value);
+        check(configs.exists(), "Contract not yet initialized");
+        auto conf = configs.get();
+        for (name admin : conf.admins)
+            if (has_auth(admin))
+                return;
+
+        check(false, "This transaction was not authorized by an admin");
+    }
+
     [[eosio::on_notify("eosio.token::transfer")]] void catch_transfer(name from, name to, asset quantity, string memo);
 
     TABLE config
     {
         asset create_price;
+        std::vector<name> admins = {};
 
-        EOSLIB_SERIALIZE(config, (create_price))
+        EOSLIB_SERIALIZE(config, (create_price)(admins))
     };
     typedef singleton<name("config"), config> config_table;
 
@@ -59,7 +87,7 @@ public:
         string logo_sm;
         string logo_lg;
         symbol token_symbol;
-        optional<map<string, string>> meta;
+        map<string, string> meta;
 
         uint64_t primary_key() const { return token_symbol.code().raw(); }
         EOSLIB_SERIALIZE(token, (contract_account)(token_owner)(token_name)(logo_sm)(logo_lg)(token_symbol)(meta))

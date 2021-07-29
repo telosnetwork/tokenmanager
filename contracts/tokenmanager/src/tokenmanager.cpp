@@ -6,6 +6,22 @@ ACTION tokenmanager::init(asset create_price)
 {
     require_auth(get_self());
 
+/*
+tokens_table st(get_self(), get_self().value);
+auto itr = st.begin();
+while(itr != st.end()){
+    itr = st.erase(itr);
+}
+*/
+
+/*
+   config_table configs(get_self(), get_self().value);
+
+    check(configs.exists(), "config already initialized");
+
+    configs.remove();
+    */
+
     config_table configs(get_self(), get_self().value);
 
     check(!configs.exists(), "config already initialized");
@@ -16,9 +32,30 @@ ACTION tokenmanager::init(asset create_price)
     configs.set(new_conf, get_self());
 }
 
+ACTION tokenmanager::addadmin(name newadmin) {
+    check(!is_admin(newadmin), "Account is already an admin");
+
+    config_table configs(get_self(), get_self().value);
+    check(configs.exists(), "Contract not yet initialized");
+    auto c = configs.get();
+    
+    bool have_admin = c.admins.size() > 0;
+    
+    if (!have_admin)
+        require_auth(get_self());
+    else
+        require_admin();
+
+    c.admins.push_back(newadmin);
+    configs.set(c, get_self());
+}
+
+
 ACTION tokenmanager::addtoken(string token_name, name token_owner, name contract_account, symbol token_symbol, string logo_sm, string logo_lg)
 {
-    require_auth(get_self());
+    if (!has_auth(get_self()))
+        require_admin();
+
     tokens_table tokens(get_self(), get_self().value);
     auto tkn = tokens.find(token_symbol.code().raw());
     check(tkn == tokens.end(), "Cannot create token, symbol already exists");
@@ -38,13 +75,26 @@ ACTION tokenmanager::setmeta(symbol token_symbol, string token_name, string logo
     tokens_table tokens(get_self(), get_self().value);
     auto tkn = tokens.find(token_symbol.code().raw());
     check(tkn != tokens.end(), "Token not found");
-    require_auth(tkn->token_owner);
+    if (!has_auth(tkn->token_owner) && !has_auth(get_self()))
+        require_admin();
+
     tokens.modify(tkn, same_payer, [&](auto &t)
                   {
                       t.token_name = token_name;
                       t.logo_sm = logo_sm;
                       t.logo_lg = logo_lg;
                   });
+}
+
+ACTION tokenmanager::deltoken(symbol token_symbol)
+{
+    tokens_table tokens(get_self(), get_self().value);
+    auto tkn = tokens.find(token_symbol.code().raw());
+    check(tkn != tokens.end(), "Token not found");
+    if (!has_auth(tkn->token_owner) && !has_auth(get_self()))
+        require_admin();
+
+    tokens.erase(tkn);
 }
 
 ACTION tokenmanager::createtoken(name owner, string token_name, asset max_supply, string logo_sm, string logo_lg)
@@ -59,6 +109,12 @@ ACTION tokenmanager::createtoken(name owner, string token_name, asset max_supply
     check(acct.balance.amount >= conf.create_price.amount, "Insufficient balance");
     accounts.modify(acct, same_payer, [&](auto &a)
                     { a.balance -= conf.create_price; });
+
+    action(permission_level{get_self(), name("active")},
+           name("eosio.token"),
+           name("transfer"),
+           make_tuple(get_self(), FEE_ACCOUNT, conf.create_price, std::string("Token creation fee")))
+        .send(); 
 
     tokens_table tokens(get_self(), get_self().value);
     auto tkn = tokens.find(max_supply.symbol.code().raw());
